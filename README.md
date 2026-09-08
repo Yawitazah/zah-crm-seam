@@ -38,6 +38,9 @@ honeypot). Browser posts bounce back to the referring page with `?sent=1`.
 | `CRM_GROUP` | same | the lead group, default the business name |
 | `CRM_BUSINESS` | same | on invoices |
 | `CRM_INVOICES_ENABLED`, `CASHAPP_HANDLE` | by hand | tracked ZAH invoices from the site |
+| `NOTIFY_EMAIL_TO`, `NOTIFY_SMS_TO` | the client, from their account page | where enquiry alerts go |
+| `MAILGUN_API_KEY` `MAILGUN_DOMAIN` `MAILGUN_FROM` (`MAILGUN_REGION`) | same | owner email alerts via Mailgun; or `ZEPTOMAIL_TOKEN`+`ZEPTOMAIL_FROM`, or `RESEND_API_KEY`+`RESEND_FROM` |
+| `TWILIO_ACCOUNT_SID` `TWILIO_AUTH_TOKEN` `TWILIO_FROM` | same | owner text alerts via Twilio |
 
 With none set: enquiries are logged to the deploy log and nothing else
 happens. The visitor always gets a success; a lost lead is the client's money,

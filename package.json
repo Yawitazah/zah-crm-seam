@@ -1,14 +1,25 @@
 {
   "name": "zah-crm-seam",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "ZAH CRM seam: the lead door and CRM client every ZAH client site mounts, off until the client has a CRM account.",
   "main": "index.js",
   "type": "commonjs",
-  "files": ["index.js", "README.md"],
-  "scripts": { "test": "node test/smoke.js" },
-  "engines": { "node": ">=20" },
-  "peerDependencies": { "express": ">=4.18" },
-  "devDependencies": { "express": "^4.21.2" },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node test/smoke.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "express": ">=4.18"
+  },
+  "devDependencies": {
+    "express": "^4.21.2"
+  },
   "repository": "github:Yawitazah/zah-crm-seam",
   "license": "UNLICENSED"
 }

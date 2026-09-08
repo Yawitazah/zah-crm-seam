@@ -22,7 +22,14 @@
    the client's CRM. Browser form posts are sent back to the referring page
    with ?sent=1 (or ?sent=0 when a required field is missing).
 
+   OWNER NOTIFICATIONS (1.1): every enquiry can also email and text the
+   owner straight from the site, with Mailgun / ZeptoMail / Resend and
+   Twilio credentials in the environment. No CRM required; with the CRM,
+   both happen. See notify.js. A test endpoint sits at <leadPath>/test
+   (POST, needs the site's own token in Authorization: Bearer).
+
    What it returns, for the other products to read:
+     crm.notify()            { email: {provider,on}, sms: {provider,on} } for /healthz
      crm.leadsEnabled()      ZAH_CRM_API_KEY + CRM_LEADS_ENABLED=true
      crm.invoicesEnabled()   ZAH_CRM_API_KEY + CRM_INVOICES_ENABLED=true
      crm.createLead(...)     used by ZAH Pay's onPaid
@@ -34,6 +41,8 @@
    sent nowhere but the CRM. It is THE CLIENT'S key (minted for their own
    account when they add the CRM), never Zah's developer key.
    ========================================================= */
+
+const notify = require('./notify');
 
 function mount(app, cfg = {}) {
   if (!app || typeof app.post !== 'function') throw new Error('zah-crm-seam: mount(app, cfg) needs an Express app');
@@ -107,13 +116,32 @@ function mount(app, cfg = {}) {
       try { await createLead({ name, email, phone, service, message }); }
       catch (e) { console.error('[lead] CRM lead failed:', e.message); }
     }
+    // The owner hears about it on every channel that is set up, CRM or not.
+    notify.notifyLead(doFetch, business(), { name, email, phone, service, message }).catch(() => {});
     if (typeof cfg.onLead === 'function') { try { await cfg.onLead({ name, email, phone, service, message }); } catch (e) { /* the visitor already succeeded */ } }
     if (wantsHtml) return bounce(true);
     res.json({ ok: true });
   });
 
-  console.log(`[zah-crm] leads ${leadsEnabled() ? 'ON' : 'off'}, invoices ${invoicesEnabled() ? 'ON' : 'off'}, door ${leadPath}`);
-  return { leadsEnabled, invoicesEnabled, createLead, createInvoice, leadPath, business, group };
+  // "Send a test" from the account page. Gated on the site's own token
+  // (SITE_MCP_TOKEN, the same one that lets the client's AI in), so a
+  // stranger cannot make the site text its owner.
+  app.post(`${leadPath}/test`, express.json({ limit: '4kb' }), async (req, res) => {
+    const token = String(process.env.SITE_MCP_TOKEN || cfg.testToken || '');
+    const m = (req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+    if (!token || !m || m[1].trim() !== token) return res.status(401).json({ error: 'Unauthorized' });
+    const channel = req.body && req.body.channel === 'sms' ? 'sms' : 'email';
+    try {
+      const r = await notify.sendTest(doFetch, business(), channel);
+      if (r.skipped) return res.status(400).json({ error: `${channel === 'sms' ? 'Text' : 'Email'} alerts are not set up on this site yet.` });
+      if (!r.ok) return res.status(502).json({ error: r.error || 'Send failed.' });
+      res.json({ ok: true, channel });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+  });
+
+  const st = notify.status();
+  console.log(`[zah-crm] leads ${leadsEnabled() ? 'ON' : 'off'}, invoices ${invoicesEnabled() ? 'ON' : 'off'}, door ${leadPath}, owner email ${st.email.on ? st.email.provider : 'off'}, owner sms ${st.sms.on ? st.sms.provider : 'off'}`);
+  return { leadsEnabled, invoicesEnabled, createLead, createInvoice, leadPath, business, group, notify: notify.status };
 }
 
 module.exports = { mount };
