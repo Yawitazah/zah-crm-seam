@@ -1,6 +1,6 @@
 {
   "name": "zah-crm-seam",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "ZAH CRM seam: the lead door and CRM client every ZAH client site mounts, off until the client has a CRM account.",
   "main": "index.js",
   "type": "commonjs",

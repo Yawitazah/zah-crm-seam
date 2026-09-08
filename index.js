@@ -25,8 +25,8 @@
    OWNER NOTIFICATIONS (1.1): every enquiry can also email and text the
    owner straight from the site, with Mailgun / ZeptoMail / Resend and
    Twilio credentials in the environment. No CRM required; with the CRM,
-   both happen. See notify.js. A test endpoint sits at <leadPath>/test
-   (POST, needs the site's own token in Authorization: Bearer).
+   both happen. See notify.js. A test endpoint sits at POST /zah-crm/test (and
+   <leadPath>/test), needing the site's own token in Authorization: Bearer.
 
    What it returns, for the other products to read:
      crm.notify()            { email: {provider,on}, sms: {provider,on} } for /healthz
@@ -126,7 +126,7 @@ function mount(app, cfg = {}) {
   // "Send a test" from the account page. Gated on the site's own token
   // (SITE_MCP_TOKEN, the same one that lets the client's AI in), so a
   // stranger cannot make the site text its owner.
-  app.post(`${leadPath}/test`, express.json({ limit: '4kb' }), async (req, res) => {
+  const testHandler = async (req, res) => {
     const token = String(process.env.SITE_MCP_TOKEN || cfg.testToken || '');
     const m = (req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
     if (!token || !m || m[1].trim() !== token) return res.status(401).json({ error: 'Unauthorized' });
@@ -137,7 +137,10 @@ function mount(app, cfg = {}) {
       if (!r.ok) return res.status(502).json({ error: r.error || 'Send failed.' });
       res.json({ ok: true, channel });
     } catch (e) { res.status(502).json({ error: e.message }); }
-  });
+  };
+  // Fixed address for the account page, plus the door's own, whatever the door is called.
+  app.post('/zah-crm/test', express.json({ limit: '4kb' }), testHandler);
+  app.post(`${leadPath}/test`, express.json({ limit: '4kb' }), testHandler);
 
   const st = notify.status();
   console.log(`[zah-crm] leads ${leadsEnabled() ? 'ON' : 'off'}, invoices ${invoicesEnabled() ? 'ON' : 'off'}, door ${leadPath}, owner email ${st.email.on ? st.email.provider : 'off'}, owner sms ${st.sms.on ? st.sms.provider : 'off'}`);
