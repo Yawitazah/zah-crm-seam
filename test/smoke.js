@@ -31,7 +31,34 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exit(1);
   assert(r.ok && calls.length === 2 && calls[0].url.endsWith('/leads') && calls[0].body.group === 'Test' && calls[0].auth === 'Bearer zah_live_test' && calls[1].url.endsWith('/contactlog'), 'lead + note posted to the CRM with the key');
   const inv = await (async () => { process.env.CRM_INVOICES_ENABLED = 'true'; return crm.createInvoice({ customerName: 'A', customerEmail: 'a@b.c', items: [{ description: 'x', amount: 1 }] }); })();
   assert(calls[2].url.endsWith('/money/zah-invoices') && calls[2].body.business === 'Test Co', 'invoice created through the seam');
+  // a courier form's extra fields ride along in the note
+  r = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'B', phone: '555', company: 'Acme', timing: 'Today', pickup: 'Marietta', dropoff: 'Decatur', details: 'two boxes' }) });
+  assert(r.ok && calls[4].url.endsWith('/contactlog') && /Company: Acme\nWhen: Today\nPickup: Marietta\nDrop-off: Decatur\ntwo boxes/.test(calls[4].body.details.noteText), 'delivery fields kept in the CRM note');
   srv.close();
+
+  // Dispatch intake: the request goes to the board, no second lead, tracking URL back
+  process.env.DISPATCH_INTAKE_KEY = 'intake_test';
+  const dcalls = [];
+  const dstub = async (url, init) => { dcalls.push({ url, body: JSON.parse(init.body), auth: init.headers.Authorization }); return { ok: true, text: async () => JSON.stringify({ ok: true, trackPath: '/t/tok123' }) }; };
+  app = express();
+  crm = mount(app, { business: 'Test Co', group: 'Test', fetch: dstub });
+  srv = app.listen(0); base = `http://127.0.0.1:${srv.address().port}`;
+  assert(crm.dispatchEnabled() === true, 'dispatch on with the intake key');
+  r = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'C', phone: '555', email: 'c@d.e', company: 'Acme', service: 'STAT', timing: 'Today', pickup: 'Marietta', dropoff: 'Decatur', details: 'cold chain' }) });
+  const dj = await r.json();
+  const post = dcalls.find((c) => c.url.includes('/api/dispatch-public/request/intake_test'));
+  assert(r.ok && dj.trackUrl === 'https://zahcrm.com/t/tok123', 'visitor gets the tracking URL');
+  assert(post && post.body.customerName === 'C' && post.body.customerContact === '555' && post.body.customerEmail === 'c@d.e' && post.body.serviceType === 'STAT' && post.body.preferredWhen === 'Today' && post.body.pickup === 'Marietta' && post.body.dropoff === 'Decatur' && post.body.notes === 'Company: Acme\ncold chain' && !post.auth, 'request posted to the board with the Dispatch field names, no key');
+  assert(!dcalls.some((c) => c.url.endsWith('/leads')), 'no duplicate lead while Dispatch is on');
+  // the board is down: falls back to a CRM lead, visitor still succeeds
+  const fcalls = [];
+  const fstub = async (url, init) => { fcalls.push({ url }); if (url.includes('/dispatch-public/')) return { ok: false, status: 503, text: async () => 'down' }; return { ok: true, text: async () => JSON.stringify({ id: 'lead_2' }) }; };
+  srv.close(); app = express(); crm = mount(app, { business: 'Test Co', group: 'Test', fetch: fstub });
+  srv = app.listen(0); base = `http://127.0.0.1:${srv.address().port}`;
+  r = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'D', phone: '555' }) });
+  assert(r.ok && (await r.json()).trackUrl === null && fcalls.some((c) => c.url.endsWith('/leads')), 'board down -> CRM lead, visitor still ok');
+  srv.close();
+  delete process.env.DISPATCH_INTAKE_KEY;
   console.log('\nALL PASSED');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

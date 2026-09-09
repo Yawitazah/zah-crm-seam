@@ -21,6 +21,21 @@ Mount it before `express.static`. It registers `POST /api/lead` (JSON or a
 plain HTML form: `name`, `email`, `phone`, `service`, `message`; `website` is a
 honeypot). Browser posts bounce back to the referring page with `?sent=1`.
 
+Delivery and field-service forms can also send `company`, `pickup`,
+`dropoff`, `when` (or `timing`) and `details` (an alias of `message`). They
+ride into the CRM note and the owner's alert, so nothing typed is lost.
+
+## ZAH Dispatch intake (1.2)
+
+A client on the Dispatch tier has a public **intake key** (ZAH CRM, Dispatch,
+settings). Set `DISPATCH_INTAKE_KEY` on the site and the same door becomes an
+order intake: the enquiry lands on their Dispatch board as a request, Dispatch
+mints the CRM lead itself (so no duplicate), and the JSON answer carries
+`trackUrl`, the customer's tracking page. If the board cannot be reached the
+enquiry falls back to a CRM lead when leads are on; the visitor always
+succeeds. `crm.dispatchEnabled()` for `/healthz`; `crm.createDispatchRequest()`
+for anything else on the site that books work.
+
 ## What the other products read from it
 
 | | |
@@ -38,6 +53,7 @@ honeypot). Browser posts bounce back to the referring page with `?sent=1`.
 | `CRM_GROUP` | same | the lead group, default the business name |
 | `CRM_BUSINESS` | same | on invoices |
 | `CRM_INVOICES_ENABLED`, `CASHAPP_HANDLE` | by hand | tracked ZAH invoices from the site |
+| `DISPATCH_INTAKE_KEY` | ZAH Onboarding on the Dispatch tier | the account's public intake key: enquiries become requests on the Dispatch board, visitors get a tracking page |
 | `NOTIFY_EMAIL_TO`, `NOTIFY_SMS_TO` | the client, from their account page | where enquiry alerts go |
 | `MAILGUN_API_KEY` `MAILGUN_DOMAIN` `MAILGUN_FROM` (`MAILGUN_REGION`) | same | owner email alerts via Mailgun; or `ZEPTOMAIL_TOKEN`+`ZEPTOMAIL_FROM`, or `RESEND_API_KEY`+`RESEND_FROM` |
 | `TWILIO_ACCOUNT_SID` `TWILIO_AUTH_TOKEN` `TWILIO_FROM` | same | owner text alerts via Twilio |

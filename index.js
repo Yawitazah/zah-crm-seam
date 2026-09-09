@@ -28,12 +28,23 @@
    both happen. See notify.js. A test endpoint sits at POST /zah-crm/test (and
    <leadPath>/test), needing the site's own token in Authorization: Bearer.
 
+   ZAH DISPATCH INTAKE (1.2): a client on the Dispatch tier has a public
+   intake key (Dispatch settings in ZAH CRM). With DISPATCH_INTAKE_KEY set,
+   the same door becomes an ORDER INTAKE: the enquiry lands on the client's
+   Dispatch board as a request, Dispatch mints the CRM lead itself, and the
+   visitor is answered with a tracking page (`trackUrl`). The door also reads
+   the delivery fields a courier form asks for: company, pickup, dropoff,
+   when (or timing), and details as an alias of message. Off, it is a lead
+   as before; nothing on the page changes between the two.
+
    What it returns, for the other products to read:
      crm.notify()            { email: {provider,on}, sms: {provider,on} } for /healthz
      crm.leadsEnabled()      ZAH_CRM_API_KEY + CRM_LEADS_ENABLED=true
      crm.invoicesEnabled()   ZAH_CRM_API_KEY + CRM_INVOICES_ENABLED=true
+     crm.dispatchEnabled()   DISPATCH_INTAKE_KEY is set
      crm.createLead(...)     used by ZAH Pay's onPaid
      crm.createInvoice(...)  tracked ZAH invoice, hosted page URL back
+     crm.createDispatchRequest(...)  a request on the Dispatch board, tracking URL back
      crm.leadPath            what ZAH Site MCP tells the client's AI
 
    SECURITY, the whole reason this is on the server: ZAH_CRM_API_KEY is a
@@ -57,6 +68,33 @@ function mount(app, cfg = {}) {
 
   const leadsEnabled = () => process.env.CRM_LEADS_ENABLED === 'true' && !!apiKey();
   const invoicesEnabled = () => process.env.CRM_INVOICES_ENABLED === 'true' && !!apiKey();
+
+  // ZAH Dispatch. The intake key is public by design (it is the address a
+  // website posts orders to, like embedCapture's site key), so it needs no
+  // API key and works before the client has connected their CRM key.
+  const dispatchKey = () => String(cfg.dispatchIntakeKey || process.env.DISPATCH_INTAKE_KEY || '');
+  const dispatchEnabled = () => !!dispatchKey();
+  const CRM_ORIGIN = API_BASE.replace(/\/api$/, '');
+
+  /** A request on the client's Dispatch board. Dispatch finds or mints the CRM lead itself. */
+  async function createDispatchRequest({ name, email, phone, company, service, when, pickup, dropoff, message }) {
+    if (!dispatchEnabled()) throw new Error('ZAH Dispatch intake is not enabled on this site');
+    const res = await doFetch(`${CRM_ORIGIN}/api/dispatch-public/request/${encodeURIComponent(dispatchKey())}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customerName: name, customerContact: phone, customerEmail: email,
+        pickup, dropoff, serviceType: service, preferredWhen: when,
+        notes: [company ? `Company: ${company}` : '', message].filter(Boolean).join('\n'),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(text.slice(0, 300) || `HTTP ${res.status}`);
+    const data = text ? JSON.parse(text) : {};
+    const trackPath = data && data.trackPath ? String(data.trackPath) : null;
+    return { trackPath, trackUrl: trackPath ? `${CRM_ORIGIN}${trackPath}` : null };
+  }
 
   async function call(path, body) {
     const res = await doFetch(`${API_BASE}${path}`, {
@@ -106,21 +144,42 @@ function mount(app, cfg = {}) {
     const bounce = (ok) => res.redirect(303, back + (back.includes('?') ? '&' : '?') + (ok ? 'sent=1' : 'sent=0') + '#form');
     if (clean(b.website)) return wantsHtml ? bounce(true) : res.json({ ok: true }); // honeypot
     const name = clean(b.name, 120), email = clean(b.email, 160), phone = clean(b.phone, 40);
-    const service = clean(b.service, 80), message = clean(b.message, 2000);
+    const service = clean(b.service, 80), message = clean(b.message || b.details || b.notes, 2000);
+    // The delivery fields a courier or field-service form asks for. Empty on
+    // an ordinary contact form and then simply absent from everything below.
+    const company = clean(b.company, 140), pickup = clean(b.pickup, 300), dropoff = clean(b.dropoff, 300);
+    const when = clean(b.when || b.timing || b.preferredWhen, 160);
     if (!name || (!email && !phone)) {
       if (wantsHtml) return bounce(false);
       return res.status(400).json({ error: 'Please include your name and either an email or a phone number.' });
     }
-    console.log('[lead]', JSON.stringify({ at: new Date().toISOString(), name, email, phone, service, message }));
-    if (leadsEnabled()) {
-      try { await createLead({ name, email, phone, service, message }); }
+    // One block of text that keeps every field, for the CRM note and the
+    // owner's alert. Nothing typed into the form is lost on the way.
+    const detail = [
+      company ? `Company: ${company}` : '', when ? `When: ${when}` : '',
+      pickup ? `Pickup: ${pickup}` : '', dropoff ? `Drop-off: ${dropoff}` : '', message,
+    ].filter(Boolean).join('\n');
+    console.log('[lead]', JSON.stringify({ at: new Date().toISOString(), name, email, phone, service, company, when, pickup, dropoff, message }));
+
+    let trackUrl = null;
+    if (dispatchEnabled()) {
+      // Dispatch is the record: it minted the lead, so no second lead here.
+      // If the board cannot be reached the enquiry still becomes a lead when
+      // the CRM is on, and the owner is still told either way.
+      try { trackUrl = (await createDispatchRequest({ name, email, phone, company, service, when, pickup, dropoff, message })).trackUrl; }
+      catch (e) {
+        console.error('[lead] Dispatch request failed:', e.message);
+        if (leadsEnabled()) { try { await createLead({ name, email, phone, service, message: detail }); } catch (e2) { console.error('[lead] CRM lead failed:', e2.message); } }
+      }
+    } else if (leadsEnabled()) {
+      try { await createLead({ name, email, phone, service, message: detail }); }
       catch (e) { console.error('[lead] CRM lead failed:', e.message); }
     }
     // The owner hears about it on every channel that is set up, CRM or not.
-    notify.notifyLead(doFetch, business(), { name, email, phone, service, message }).catch(() => {});
-    if (typeof cfg.onLead === 'function') { try { await cfg.onLead({ name, email, phone, service, message }); } catch (e) { /* the visitor already succeeded */ } }
+    notify.notifyLead(doFetch, business(), { name, email, phone, service, message: trackUrl ? `${detail}\nTracking: ${trackUrl}`.trim() : detail }).catch(() => {});
+    if (typeof cfg.onLead === 'function') { try { await cfg.onLead({ name, email, phone, service, message, company, when, pickup, dropoff, trackUrl }); } catch (e) { /* the visitor already succeeded */ } }
     if (wantsHtml) return bounce(true);
-    res.json({ ok: true });
+    res.json({ ok: true, trackUrl });
   });
 
   // "Send a test" from the account page. Gated on the site's own token
@@ -143,8 +202,8 @@ function mount(app, cfg = {}) {
   app.post(`${leadPath}/test`, express.json({ limit: '4kb' }), testHandler);
 
   const st = notify.status();
-  console.log(`[zah-crm] leads ${leadsEnabled() ? 'ON' : 'off'}, invoices ${invoicesEnabled() ? 'ON' : 'off'}, door ${leadPath}, owner email ${st.email.on ? st.email.provider : 'off'}, owner sms ${st.sms.on ? st.sms.provider : 'off'}`);
-  return { leadsEnabled, invoicesEnabled, createLead, createInvoice, leadPath, business, group, notify: notify.status };
+  console.log(`[zah-crm] leads ${leadsEnabled() ? 'ON' : 'off'}, invoices ${invoicesEnabled() ? 'ON' : 'off'}, dispatch ${dispatchEnabled() ? 'ON' : 'off'}, door ${leadPath}, owner email ${st.email.on ? st.email.provider : 'off'}, owner sms ${st.sms.on ? st.sms.provider : 'off'}`);
+  return { leadsEnabled, invoicesEnabled, dispatchEnabled, createLead, createInvoice, createDispatchRequest, leadPath, business, group, notify: notify.status };
 }
 
 module.exports = { mount };
