@@ -102,6 +102,7 @@
       setTimeout(function () { chosen = null; }, 300);
     }
     list.addEventListener('mousedown', pickFromEvent);
+    list.addEventListener('touchstart', pickFromEvent, { passive: false });
     list.addEventListener('click', pickFromEvent);
     list.addEventListener('mouseover', function (e) {
       var li = e.target && e.target.closest ? e.target.closest('.zah-addr-item') : null;
@@ -153,7 +154,11 @@
       delete input.dataset.lat; delete input.dataset.lon;
       var q = input.value.trim();
       clearTimeout(timer);
-      if (q.length < 3 || q === last) { items = []; close(); return; }
+      if (q.length < 3) { items = []; close(); return; }
+      // An input event with the same text (autofill settling, an IME
+      // composition ending, a key that changed nothing) must not close a
+      // list that is already the right answer for this text.
+      if (q === last) { if (items.length) render(); return; }
       timer = setTimeout(function () { last = q; lookup(q); }, 220);
     });
     input.addEventListener('focus', function () { if (items.length) render(); });
