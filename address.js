@@ -65,21 +65,50 @@
     var items = [], active = -1, timer = null, last = '', note = null;
 
     function close() { list.hidden = true; active = -1; }
+    function paint() {
+      // Hover and arrow keys only move the highlight; the rows are never
+      // rebuilt under the pointer, so a press always lands on the row that
+      // was hovered.
+      Array.prototype.forEach.call(list.children, function (li, i) {
+        li.setAttribute('aria-selected', i === active ? 'true' : 'false');
+      });
+    }
     function render() {
       list.innerHTML = '';
       items.forEach(function (s, i) {
         var li = document.createElement('li');
         li.className = 'zah-addr-item';
         li.setAttribute('role', 'option');
-        li.setAttribute('aria-selected', i === active ? 'true' : 'false');
+        li.setAttribute('data-i', String(i));
         li.textContent = s.label;
-        li.addEventListener('mousedown', function (e) { e.preventDefault(); choose(s); });
-        li.addEventListener('mouseenter', function () { active = i; render(); });
         list.appendChild(li);
       });
+      paint();
       list.hidden = items.length === 0;
       input.setAttribute('aria-expanded', items.length ? 'true' : 'false');
     }
+    // One listener on the list for every row. mousedown is the real path (it
+    // runs before the input blurs, so the list is still there); click is the
+    // fallback for anything that only sends clicks. `chosen` stops a double.
+    var chosen = null;
+    function pickFromEvent(e) {
+      var li = e.target && e.target.closest ? e.target.closest('.zah-addr-item') : null;
+      if (!li || !list.contains(li)) return;
+      e.preventDefault();
+      var s = items[Number(li.getAttribute('data-i'))];
+      if (!s || chosen === s) return;
+      chosen = s;
+      choose(s);
+      setTimeout(function () { chosen = null; }, 300);
+    }
+    list.addEventListener('mousedown', pickFromEvent);
+    list.addEventListener('click', pickFromEvent);
+    list.addEventListener('mouseover', function (e) {
+      var li = e.target && e.target.closest ? e.target.closest('.zah-addr-item') : null;
+      if (!li) return;
+      active = Number(li.getAttribute('data-i'));
+      paint();
+    });
     function choose(s) {
       last = s.label;
       input.value = s.label;
@@ -128,11 +157,11 @@
       timer = setTimeout(function () { last = q; lookup(q); }, 220);
     });
     input.addEventListener('focus', function () { if (items.length) render(); });
-    input.addEventListener('blur', function () { setTimeout(close, 120); });
+    input.addEventListener('blur', function () { setTimeout(close, 200); });
     input.addEventListener('keydown', function (e) {
       if (list.hidden || !items.length) return;
-      if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, items.length - 1); render(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); render(); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, items.length - 1); paint(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); paint(); }
       else if (e.key === 'Enter') { if (active >= 0) { e.preventDefault(); choose(items[active]); } }
       else if (e.key === 'Escape') close();
     });
