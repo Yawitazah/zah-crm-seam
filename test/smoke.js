@@ -50,6 +50,13 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exit(1);
   assert(r.ok && dj.trackUrl === 'https://zahcrm.com/t/tok123', 'visitor gets the tracking URL');
   assert(post && post.body.customerName === 'C' && post.body.customerContact === '555' && post.body.customerEmail === 'c@d.e' && post.body.serviceType === 'STAT' && post.body.preferredWhen === 'Today' && post.body.pickup === 'Marietta' && post.body.dropoff === 'Decatur' && post.body.notes === 'Company: Acme\ncold chain' && !post.auth, 'request posted to the board with the Dispatch field names, no key');
   assert(!dcalls.some((c) => c.url.endsWith('/leads')), 'no duplicate lead while Dispatch is on');
+  // the load: flat form fields become the calculator's packageInfo + stops
+  r = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'E', phone: '555', packageType: 'Box', quantityBand: '2-5', quantityExact: '3', weightBand: '20-50', length: '12', width: '10', height: '8', extraStops: '2', stops: '1 Main St\n2 Oak Ave' }) });
+  const lp = dcalls.filter((c) => c.url.includes('/dispatch-public/request/')).pop();
+  assert(r.ok && lp.body.packageInfo && lp.body.packageInfo.type === 'Box' && lp.body.packageInfo.quantityBand === '2-5' && lp.body.packageInfo.quantityExact === '3' && lp.body.packageInfo.weightBand === '20-50' && lp.body.packageInfo.length === '12' && lp.body.extraStops === '2' && /Oak Ave/.test(lp.body.stops), 'load fields reach the Dispatch intake as packageInfo + stops');
+  r = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'F', phone: '555' }) });
+  const np = dcalls.filter((c) => c.url.includes('/dispatch-public/request/')).pop();
+  assert(r.ok && np.body.packageInfo === undefined && np.body.extraStops === undefined, 'a plain enquiry sends no empty load');
   // the board is down: falls back to a CRM lead, visitor still succeeds
   const fcalls = [];
   const fstub = async (url, init) => { fcalls.push({ url }); if (url.includes('/dispatch-public/')) return { ok: false, status: 503, text: async () => 'down' }; return { ok: true, text: async () => JSON.stringify({ id: 'lead_2' }) }; };

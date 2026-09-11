@@ -76,8 +76,11 @@ function mount(app, cfg = {}) {
   const dispatchEnabled = () => !!dispatchKey();
   const CRM_ORIGIN = API_BASE.replace(/\/api$/, '');
 
-  /** A request on the client's Dispatch board. Dispatch finds or mints the CRM lead itself. */
-  async function createDispatchRequest({ name, email, phone, company, service, when, pickup, dropoff, message }) {
+  /** A request on the client's Dispatch board. Dispatch finds or mints the CRM lead itself.
+   *  `packageInfo`, `extraStops` and `stops` are the load, in the shape the
+   *  calculator reads (see DispatchPackageFields in the CRM); the office's
+   *  calculator opens already filled in. */
+  async function createDispatchRequest({ name, email, phone, company, service, when, pickup, dropoff, message, packageInfo, extraStops, stops }) {
     if (!dispatchEnabled()) throw new Error('ZAH Dispatch intake is not enabled on this site');
     const res = await doFetch(`${CRM_ORIGIN}/api/dispatch-public/request/${encodeURIComponent(dispatchKey())}`, {
       method: 'POST',
@@ -86,6 +89,9 @@ function mount(app, cfg = {}) {
         customerName: name, customerContact: phone, customerEmail: email,
         pickup, dropoff, serviceType: service, preferredWhen: when,
         notes: [company ? `Company: ${company}` : '', message].filter(Boolean).join('\n'),
+        ...(packageInfo ? { packageInfo } : {}),
+        ...(extraStops ? { extraStops } : {}),
+        ...(stops ? { stops } : {}),
       }),
       signal: AbortSignal.timeout(15000),
     });
@@ -149,6 +155,28 @@ function mount(app, cfg = {}) {
     // an ordinary contact form and then simply absent from everything below.
     const company = clean(b.company, 140), pickup = clean(b.pickup, 300), dropoff = clean(b.dropoff, 300);
     const when = clean(b.when || b.timing || b.preferredWhen, 160);
+    // The load, for a Dispatch request: what the calculator prices, as the
+    // customer could answer it. Flat names so a plain HTML form can send
+    // them (packageType, quantityBand, quantityExact, weightBand,
+    // weightExact, length, width, height, extraStops, stops); a nested
+    // `packageInfo` object is accepted too. Empty on an ordinary contact
+    // form and then simply absent from everything below.
+    const pk = b.packageInfo && typeof b.packageInfo === 'object' ? b.packageInfo : {};
+    const packageInfo = {
+      type: clean(pk.type || b.packageType, 60),
+      quantityBand: clean(pk.quantityBand || b.quantityBand, 20), quantityExact: clean(pk.quantityExact || b.quantityExact, 10),
+      weightBand: clean(pk.weightBand || b.weightBand, 20), weightExact: clean(pk.weightExact || b.weightExact, 12),
+      length: clean(pk.length || b.length, 8), width: clean(pk.width || b.width, 8), height: clean(pk.height || b.height, 8),
+    };
+    const hasPackage = Object.values(packageInfo).some(Boolean);
+    const extraStops = clean(b.extraStops, 3), stops = clean(b.stops, 600);
+    const load = [
+      packageInfo.type,
+      packageInfo.quantityExact ? `${packageInfo.quantityExact} pcs` : packageInfo.quantityBand ? `qty ${packageInfo.quantityBand}` : '',
+      packageInfo.weightExact ? `${packageInfo.weightExact} lb` : packageInfo.weightBand ? `${packageInfo.weightBand} lb` : '',
+      packageInfo.length && packageInfo.width && packageInfo.height ? `${packageInfo.length}×${packageInfo.width}×${packageInfo.height} in` : '',
+      extraStops && extraStops !== '0' ? `${extraStops} extra stop(s)${stops ? `: ${stops}` : ''}` : '',
+    ].filter(Boolean).join(', ');
     if (!name || (!email && !phone)) {
       if (wantsHtml) return bounce(false);
       return res.status(400).json({ error: 'Please include your name and either an email or a phone number.' });
@@ -157,16 +185,22 @@ function mount(app, cfg = {}) {
     // owner's alert. Nothing typed into the form is lost on the way.
     const detail = [
       company ? `Company: ${company}` : '', when ? `When: ${when}` : '',
-      pickup ? `Pickup: ${pickup}` : '', dropoff ? `Drop-off: ${dropoff}` : '', message,
+      pickup ? `Pickup: ${pickup}` : '', dropoff ? `Drop-off: ${dropoff}` : '',
+      load ? `Load: ${load}` : '', message,
     ].filter(Boolean).join('\n');
-    console.log('[lead]', JSON.stringify({ at: new Date().toISOString(), name, email, phone, service, company, when, pickup, dropoff, message }));
+    console.log('[lead]', JSON.stringify({ at: new Date().toISOString(), name, email, phone, service, company, when, pickup, dropoff, load, message }));
 
     let trackUrl = null;
     if (dispatchEnabled()) {
       // Dispatch is the record: it minted the lead, so no second lead here.
       // If the board cannot be reached the enquiry still becomes a lead when
       // the CRM is on, and the owner is still told either way.
-      try { trackUrl = (await createDispatchRequest({ name, email, phone, company, service, when, pickup, dropoff, message })).trackUrl; }
+      try {
+        trackUrl = (await createDispatchRequest({
+          name, email, phone, company, service, when, pickup, dropoff, message,
+          packageInfo: hasPackage ? packageInfo : undefined, extraStops, stops,
+        })).trackUrl;
+      }
       catch (e) {
         console.error('[lead] Dispatch request failed:', e.message);
         if (leadsEnabled()) { try { await createLead({ name, email, phone, service, message: detail }); } catch (e2) { console.error('[lead] CRM lead failed:', e2.message); } }

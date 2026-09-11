@@ -36,6 +36,15 @@ enquiry falls back to a CRM lead when leads are on; the visitor always
 succeeds. `crm.dispatchEnabled()` for `/healthz`; `crm.createDispatchRequest()`
 for anything else on the site that books work.
 
+**The load (1.3).** A courier form can also send what is being moved, in the
+shape the Dispatch calculator reads, so the office's calculator opens filled
+in: `packageType`, `quantityBand` (`1` `2-5` `6-10` `11-25` `25+`) or
+`quantityExact`, `weightBand` (`under-5` `5-20` `20-50` `50-150` `150-500`
+`500+`) or `weightExact` (lb), `length` `width` `height` (inches),
+`extraStops` (count) and `stops` (the other addresses). A nested
+`packageInfo` object with the same keys is accepted too. Without Dispatch the
+same fields ride into the CRM note and the owner's alert as a "Load:" line.
+
 ## What the other products read from it
 
 | | |
