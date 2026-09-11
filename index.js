@@ -248,7 +248,10 @@ function mount(app, cfg = {}) {
   const addressJs = require('path').join(__dirname, 'address.js');
   app.get('/zah-crm/address.js', (_req, res) => {
     res.type('application/javascript');
-    res.set('Cache-Control', 'public, max-age=3600');
+    // Revalidate on every visit (a 304 is nearly free) rather than cache for
+    // an hour: a fix to this file should reach a browser on the next load,
+    // not sixty minutes later. Same rule the sites use for their own JS.
+    res.set('Cache-Control', 'no-cache');
     res.sendFile(addressJs);
   });
   const suggestHandler = async (req, res) => {
