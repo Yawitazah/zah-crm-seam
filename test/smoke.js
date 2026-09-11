@@ -39,7 +39,10 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exit(1);
   // Dispatch intake: the request goes to the board, no second lead, tracking URL back
   process.env.DISPATCH_INTAKE_KEY = 'intake_test';
   const dcalls = [];
-  const dstub = async (url, init) => { dcalls.push({ url, body: JSON.parse(init.body), auth: init.headers.Authorization }); return { ok: true, text: async () => JSON.stringify({ ok: true, trackPath: '/t/tok123' }) }; };
+  const dstub = async (url, init) => {
+    if (!init || !init.body) { dcalls.push({ url, body: null }); return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, suggestions: [{ label: '1100 Howell Mill Road NW, Atlanta, GA, USA', lat: 33.78, lon: -84.41 }] }) }; }
+    dcalls.push({ url, body: JSON.parse(init.body), auth: init.headers.Authorization }); return { ok: true, text: async () => JSON.stringify({ ok: true, trackPath: '/t/tok123' }) };
+  };
   app = express();
   crm = mount(app, { business: 'Test Co', group: 'Test', fetch: dstub });
   srv = app.listen(0); base = `http://127.0.0.1:${srv.address().port}`;
@@ -54,6 +57,16 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exit(1);
   r = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'E', phone: '555', packageType: 'Box', quantityBand: '2-5', quantityExact: '3', weightBand: '20-50', length: '12', width: '10', height: '8', extraStops: '2', stops: '1 Main St\n2 Oak Ave' }) });
   const lp = dcalls.filter((c) => c.url.includes('/dispatch-public/request/')).pop();
   assert(r.ok && lp.body.packageInfo && lp.body.packageInfo.type === 'Box' && lp.body.packageInfo.quantityBand === '2-5' && lp.body.packageInfo.quantityExact === '3' && lp.body.packageInfo.weightBand === '20-50' && lp.body.packageInfo.length === '12' && lp.body.extraStops === '2' && /Oak Ave/.test(lp.body.stops), 'load fields reach the Dispatch intake as packageInfo + stops');
+  // address suggestions proxy: the script is served, the lookup goes to the CRM with the key
+  r = await fetch(base + '/zah-crm/address.js');
+  assert(r.ok && /data-address/.test(await r.text()), 'address.js is served from the package');
+  r = await fetch(base + '/zah-crm/address?q=1100+howell');
+  const sug = await r.json();
+  const sq = dcalls.find((c) => c.url.includes('/dispatch-public/address/intake_test?q=1100'));
+  assert(r.ok && sq && sug.ok === true, 'suggest proxied to the CRM address endpoint with the intake key');
+  r = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'G', phone: '555', pickup: '364 Nowhere Cir', addressUnverified: 'yes' }) });
+  const up = dcalls.filter((c) => c.url.includes('/dispatch-public/request/')).pop();
+  assert(r.ok && /ADDRESS NOT VERIFIED/.test(up.body.notes), 'an unverified address is flagged on the request');
   r = await fetch(base + '/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'F', phone: '555' }) });
   const np = dcalls.filter((c) => c.url.includes('/dispatch-public/request/')).pop();
   assert(r.ok && np.body.packageInfo === undefined && np.body.extraStops === undefined, 'a plain enquiry sends no empty load');

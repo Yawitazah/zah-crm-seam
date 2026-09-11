@@ -45,6 +45,18 @@ in: `packageType`, `quantityBand` (`1` `2-5` `6-10` `11-25` `25+`) or
 `packageInfo` object with the same keys is accepted too. Without Dispatch the
 same fields ride into the CRM note and the owner's alert as a "Load:" line.
 
+**Address suggestions (1.4).** Any `<input data-address>` on the site finds
+the address as the visitor types, from the same provider the Dispatch
+calculator uses for mileage, so what they pick is what gets priced. Include
+`<script src="/zah-crm/address.js" defer></script>`. The seam proxies
+`GET /zah-crm/address?q=` (and `<leadPath>/address`) to the CRM with the
+site's intake key; 503 without Dispatch, which the script reads as "type
+it". On a pick the input gets `data-address-picked="1"` (cleared on the next
+keystroke) and `data-lat`/`data-lon`; if the lookup is down,
+`data-address-offline="1"`. Direct Inbox uses those to insist on a picked
+address, and sends `addressUnverified=yes` when the visitor overrode it; the
+seam then flags the request so the office confirms before pricing.
+
 ## What the other products read from it
 
 | | |

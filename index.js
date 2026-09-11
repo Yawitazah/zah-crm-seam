@@ -170,6 +170,9 @@ function mount(app, cfg = {}) {
     };
     const hasPackage = Object.values(packageInfo).some(Boolean);
     const extraStops = clean(b.extraStops, 3), stops = clean(b.stops, 600);
+    // The form could not match an address to a real place and the visitor
+    // sent it anyway. The office confirms before pricing, and the note says so.
+    const addressUnverified = /^(yes|true|1)$/i.test(clean(b.addressUnverified, 8));
     const load = [
       packageInfo.type,
       packageInfo.quantityExact ? `${packageInfo.quantityExact} pcs` : packageInfo.quantityBand ? `qty ${packageInfo.quantityBand}` : '',
@@ -186,6 +189,7 @@ function mount(app, cfg = {}) {
     const detail = [
       company ? `Company: ${company}` : '', when ? `When: ${when}` : '',
       pickup ? `Pickup: ${pickup}` : '', dropoff ? `Drop-off: ${dropoff}` : '',
+      addressUnverified ? 'ADDRESS NOT VERIFIED: the form could not match it to a real place. Confirm before pricing.' : '',
       load ? `Load: ${load}` : '', message,
     ].filter(Boolean).join('\n');
     console.log('[lead]', JSON.stringify({ at: new Date().toISOString(), name, email, phone, service, company, when, pickup, dropoff, load, message }));
@@ -197,7 +201,8 @@ function mount(app, cfg = {}) {
       // the CRM is on, and the owner is still told either way.
       try {
         trackUrl = (await createDispatchRequest({
-          name, email, phone, company, service, when, pickup, dropoff, message,
+          name, email, phone, company, service, when, pickup, dropoff,
+          message: addressUnverified ? `ADDRESS NOT VERIFIED — confirm before pricing.\n${message}`.trim() : message,
           packageInfo: hasPackage ? packageInfo : undefined, extraStops, stops,
         })).trackUrl;
       }
@@ -234,6 +239,37 @@ function mount(app, cfg = {}) {
   // Fixed address for the account page, plus the door's own, whatever the door is called.
   app.post('/zah-crm/test', express.json({ limit: '4kb' }), testHandler);
   app.post(`${leadPath}/test`, express.json({ limit: '4kb' }), testHandler);
+
+  // ---------- address suggestions (1.4) ----------
+  // The "pick it as you type" list for any input marked data-address, from the
+  // same provider the Dispatch calculator uses for mileage. Proxied here so the
+  // browser never learns the intake key's shape or the CRM's host. 503 when
+  // Dispatch is not on this site, which the client script reads as "type it".
+  const addressJs = require('path').join(__dirname, 'address.js');
+  app.get('/zah-crm/address.js', (_req, res) => {
+    res.type('application/javascript');
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.sendFile(addressJs);
+  });
+  const suggestHandler = async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!dispatchEnabled()) return res.status(503).json({ error: 'not_available' });
+    const q = String(req.query.q || '').trim().slice(0, 200);
+    if (q.length < 3) return res.json({ ok: true, suggestions: [] });
+    try {
+      const r = await doFetch(`${CRM_ORIGIN}/api/dispatch-public/address/${encodeURIComponent(dispatchKey())}?q=${encodeURIComponent(q)}`, {
+        headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000),
+      });
+      if (r.status === 503 || r.status === 404) return res.status(503).json({ error: 'not_available' });
+      if (!r.ok) return res.status(502).json({ error: 'lookup_failed' });
+      const text = await r.text();
+      res.type('application/json').send(text);
+    } catch (e) {
+      res.status(502).json({ error: 'lookup_failed' });
+    }
+  };
+  app.get('/zah-crm/address', suggestHandler);
+  app.get(`${leadPath}/address`, suggestHandler);
 
   const st = notify.status();
   console.log(`[zah-crm] leads ${leadsEnabled() ? 'ON' : 'off'}, invoices ${invoicesEnabled() ? 'ON' : 'off'}, dispatch ${dispatchEnabled() ? 'ON' : 'off'}, door ${leadPath}, owner email ${st.email.on ? st.email.provider : 'off'}, owner sms ${st.sms.on ? st.sms.provider : 'off'}`);
